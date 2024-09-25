@@ -1,3 +1,5 @@
-trainingset.xlsx
+*xlsx
 best_transformer_model.pth
 __pycache__/
+*pkl
+fonts/

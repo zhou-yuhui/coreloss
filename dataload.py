@@ -39,7 +39,7 @@ y = data['磁芯损耗，w/m3'].values
 X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # 对类别特征进行One-Hot编码
-onehot_encoder = OneHotEncoder(sparse=False)
+onehot_encoder = OneHotEncoder(sparse_output=False)
 categorical_encoded = onehot_encoder.fit_transform(X_train[categorical_features])
 X_val_categorical_encoded = onehot_encoder.transform(X_val[categorical_features])
 
@@ -77,3 +77,17 @@ np.set_printoptions(threshold=np.inf)  # 设置打印选项为无限制，防止
 # # 将励磁波形类型转换为数值
 # data['励磁波形'] = data['励磁波形'].map({'正弦波': 0, '三角波': 1, '梯形波': 2})
 # data['磁芯材料'] = data['磁芯材料'].map({'材料1': 0, '材料2': 1, '材料3': 2, '材料4': 3})
+# import pickle
+
+# # 在训练脚本的最后部分添加
+# with open('onehot_encoder.pkl', 'wb') as f:
+#     pickle.dump(onehot_encoder, f)
+
+# with open('scaler_num.pkl', 'wb') as f:
+#     pickle.dump(scaler_num, f)
+
+# with open('scaler_flux.pkl', 'wb') as f:
+#     pickle.dump(scaler_flux, f)
+
+# with open('scaler_y.pkl', 'wb') as f:
+#     pickle.dump(scaler_y, f)

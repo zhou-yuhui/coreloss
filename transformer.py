@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 from dataload import *
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import matplotlib
 
 # 设置设备为 GPU（如果可用）否则使用 CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -34,10 +36,8 @@ class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=1024):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
-        position = torch.arange(
-            0, max_len, dtype=torch.float32).unsqueeze(1)
-        div_term = torch.exp(torch.arange(
-            0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
+        position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)
@@ -48,21 +48,28 @@ class PositionalEncoding(nn.Module):
         return x
 
 class TransformerRegressionModel(nn.Module):
-    def __init__(self, num_numerical, num_categorical, d_model=64, nhead=8, num_encoder_layers=3, dim_feedforward=256):
+    def __init__(self, num_numerical, num_categorical, d_model=64, nhead=8, num_encoder_layers=3, dim_feedforward=256, embedding_dim=8):
         super(TransformerRegressionModel, self).__init__()
         # 输入特征尺寸
         self.num_numerical = num_numerical
         self.num_categorical = num_categorical
         self.d_model = d_model
+        self.embedding_dim = embedding_dim
+        
+        # 数值型特征的线性层
+        self.numerical_embedding = nn.Linear(num_numerical, embedding_dim)
+        
+        # 类别型特征的嵌入层
+        self.categorical_embedding = nn.Embedding(num_categorical, embedding_dim)
+        
         # Transformer编码器
-        self.embedding = nn.Linear(1, d_model)
+        self.sequence_embedding = nn.Linear(1, d_model)
         self.pos_encoder = PositionalEncoding(d_model)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward)
-        self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_encoder_layers)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_encoder_layers)
+        
         # 总特征尺寸 = 数值型特征 + 类别型特征 + Transformer输出
-        self.fc_input_size = num_numerical + num_categorical + d_model
+        self.fc_input_size = embedding_dim + (embedding_dim * num_categorical) + d_model
         # 回归输出层
         self.regressor = nn.Sequential(
             nn.Linear(self.fc_input_size, 128),
@@ -75,16 +82,30 @@ class TransformerRegressionModel(nn.Module):
         batch_size = x.size(0)
         # 分割输入
         numerical = x[:, :self.num_numerical]
-        categorical = x[:, self.num_numerical:self.num_numerical + self.num_categorical]
+        categorical = x[:, self.num_numerical:self.num_numerical + self.num_categorical].long()
         sequence = x[:, self.num_numerical + self.num_categorical:].unsqueeze(-1)
+        
+        # 数值型特征增加维度
+        numerical_embedded = self.numerical_embedding(numerical)  # [batch_size, embedding_dim]
+        
+        # 类别型特征增加维度
+        categorical_embedded = self.categorical_embedding(categorical).view(batch_size, -1)  # [batch_size, embedding_dim]
+        
         # Transformer编码器部分
-        sequence = self.embedding(sequence)  # [batch_size, seq_len, d_model]
+        sequence = self.sequence_embedding(sequence)  # [batch_size, seq_len, d_model]
         sequence = self.pos_encoder(sequence)
-        sequence = sequence.permute(1, 0, 2)  # 调整维度以适应Transformer输入 [seq_len, batch_size, d_model]
+
         transformer_output = self.transformer_encoder(sequence)
-        transformer_output = transformer_output.mean(dim=0)  # 平均池化 [batch_size, d_model]
+        transformer_output = transformer_output.mean(dim=1)  # 平均池化 [batch_size, d_model]
+        
         # 合并所有特征
-        combined = torch.cat([numerical, categorical, transformer_output], dim=1)
+        combined = torch.cat([numerical_embedded, categorical_embedded, transformer_output], dim=1)
+
+        # print(f"numerical_embedded: {numerical_embedded.shape}")
+        # print(f"categorical_embedded: {categorical_embedded.shape}")
+        # print(f"transformer_output: {transformer_output.shape}")
+        # print(f"combined: {combined.shape}")
+
         # 回归预测
         output = self.regressor(combined)
         return output
@@ -146,7 +167,7 @@ for epoch in range(num_epochs):
         torch.save(model.state_dict(), 'best_transformer_model.pth')
 
 # 加载最佳模型
-model.load_state_dict(torch.load('best_transformer_model.pth'))
+model.load_state_dict(torch.load('best_transformer_model.pth', weights_only=True))
 model.to(device)  # 确保模型在设备上
 model.eval()
 
@@ -166,6 +187,12 @@ mae = mean_absolute_error(val_targets, val_predictions)
 
 print(f'Validation MSE: {mse:.4f}, MAE: {mae:.4f}')
 
+# 设置中文字体
+font_path = '/home/zhouyh/.fonts/SimHei.ttf'
+fm.fontManager.addfont(font_path)
+matplotlib.rcParams['font.sans-serif'] = ['SimHei']  # 设置默认字体为 SimHei
+matplotlib.rcParams['axes.unicode_minus'] = False    # 解决负号 '-' 显示为方块的问题
+
 # 绘制loss曲线图
 epochs = range(1, len(train_losses) + 1)
 plt.figure(figsize=(10, 5))
@@ -175,4 +202,52 @@ plt.xlabel('Epochs')
 plt.ylabel('Loss')
 plt.title('Training and Validation Loss')
 plt.legend()
-plt.show()
+plt.tight_layout()
+plt.show(block=False)
+
+# 绘制预测值与实际值的散点图
+plt.figure(figsize=(8, 8))
+plt.scatter(val_targets, val_predictions, alpha=0.6)
+plt.plot([min(val_targets), max(val_targets)], [min(val_targets), max(val_targets)], 'r--')
+plt.xlabel('实际值')
+plt.ylabel('预测值')
+plt.title('预测值与实际值的散点图')
+plt.grid(True)
+plt.tight_layout()
+plt.show(block=False)
+
+# 计算残差
+residuals = np.array(val_targets) - np.array(val_predictions)
+
+# 绘制残差的直方图
+plt.figure(figsize=(8, 6))
+plt.hist(residuals, bins=30, edgecolor='k', alpha=0.7)
+plt.xlabel('残差值')
+plt.ylabel('频数')
+plt.title('残差分布直方图')
+plt.grid(True)
+plt.tight_layout()
+plt.show(block=False)
+
+# 绘制残差与预测值的散点图
+plt.figure(figsize=(8, 6))
+plt.scatter(val_predictions, residuals, alpha=0.6)
+plt.hlines(y=0, xmin=min(val_predictions), xmax=max(val_predictions), colors='r', linestyles='--')
+plt.xlabel('预测值')
+plt.ylabel('残差')
+plt.title('残差与预测值的关系图')
+plt.grid(True)
+plt.tight_layout()
+plt.show(block=False)
+
+numerical_features = ['温度，oC', '频率，Hz']  # 替换为您的数值型特征名称列表
+
+for feature in numerical_features:
+    plt.figure(figsize=(8, 6))
+    plt.scatter(df[feature], df['目标变量'], alpha=0.6)
+    plt.xlabel(feature)
+    plt.ylabel('目标变量')
+    plt.title(f'{feature} 与目标变量的关系图')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
